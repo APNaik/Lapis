@@ -1,0 +1,10 @@
+langgraph
+langchain-google-genai
+langchain-community
+motor
+pymongo
+tavily-python
+docling
+youtube-transcript-api
+streamlit
+python-dotenv
