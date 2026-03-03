@@ -8,3 +8,7 @@ docling
 youtube-transcript-api
 streamlit
 python-dotenv
+langgraph-checkpoint-mongodb
+langchain-huggingface
+sentence-transformers
+faiss-cpu
