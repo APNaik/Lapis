@@ -1,8 +1,9 @@
 import uuid
+import os
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage
 from state import OutputFormat, OutputConstraints
-from backend import app, saver, ingest_youtube
+from backend import app, saver, ingest_youtube, ingest_pdf
 
 def apply_custom_theme():
     st.markdown("""
@@ -31,6 +32,18 @@ with st.sidebar:
             ingest_youtube(yt_url, st.session_state.current_thread_id)
             st.success("Video context saved for this session!")
 
+    st.header("Document Research")
+    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+    if uploaded_file and st.button("Index document"):
+        with st.spinner("Docling-ing..."):
+            temp_path = f"temp_{uploaded_file.name}"
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            num_chunks = ingest_pdf(temp_path, st.session_state.current_thread_id)
+            os.remove(temp_path)
+            st.success(f"Indexed {num_chunks} chunks from PDF!")
+            
     st.divider()
     if st.button("+ New Chat", use_container_width=True):
         st.session_state.current_thread_id = str(uuid.uuid4())
@@ -63,5 +76,4 @@ if prompt := st.chat_input("Ask about the video..."):
         for event in app.stream(inputs, config=config, stream_mode="values"):
             if "messages" in event:
                 full_res = event["messages"][-1].content
-                placeholder.markdown(full_res + "▌")
         placeholder.markdown(full_res)
