@@ -6,6 +6,7 @@ from langchain_core.documents import Document
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.mongodb import MongoDBSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -21,7 +22,16 @@ configure_hf_windows_cache()
 
 # --- Persistence ---
 client = MongoClient(os.getenv("MONGODB_URI"))
-saver = MongoDBSaver(client, db_name="lapis_db", collection_name="checkpoints", allowed_msgpack_modules=["state"])
+ALLOWED_MSGPACK_MODULES = [
+    ("state", "OutputFormat"),
+    ("state", "OutputConstraints"),
+]
+saver = MongoDBSaver(
+    client,
+    db_name="lapis_db",
+    collection_name="checkpoints",
+    serde=JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_MSGPACK_MODULES),
+)
 
 # --- RAG Setup ---
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
