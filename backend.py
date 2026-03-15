@@ -1,10 +1,7 @@
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+
 from langchain_core.documents import Document
 
 from langgraph.graph import StateGraph, START, END
@@ -15,61 +12,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
+
 from state import AgentState
+from utils.helpers import configure_hf_windows_cache, get_pdf_converter, get_transcript, get_youtube_title
 
 load_dotenv()
-
-
-def configure_hf_windows_cache() -> None:
-    """Configure Hugging Face caching to avoid Windows symlink-permission failures.
-
-    Why this exists:
-    Docling downloads layout/OCR artifacts through ``huggingface_hub`` the first
-    time PDF processing runs. On Windows, that library prefers creating symlinks
-    inside its cache for deduplication. On machines without Developer Mode,
-    Administrator privileges, or an explicit "Create symbolic links" policy,
-    symlink creation can fail with ``OSError: [WinError 1314]``. In this project,
-    that failure surfaced while calling ``pdf_converter.convert(...)`` during PDF
-    ingestion, causing the whole indexing flow to abort.
-
-    What this implementation does:
-    - Only runs on Windows.
-    - Suppresses the repeated Hugging Face symlink warning noise.
-    - Monkey-patches ``huggingface_hub.file_download.are_symlinks_supported`` to
-        always report ``False`` on Windows, which forces Hugging Face to use its
-        copy/move fallback path instead of attempting symlink creation.
-
-    Why this is safe here:
-    - It does not change application behavior on Linux-based deployments such as
-        Hugging Face Spaces.
-    - It keeps local Windows development working without requiring elevated OS
-        privileges.
-    - The tradeoff is slightly less efficient cache storage on affected Windows
-        machines, which is preferable to PDF ingestion failing entirely.
-    """
-    if os.name != "nt":
-        return
-
-    # os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-
-    try:
-        from huggingface_hub import file_download as hf_file_download
-    except Exception:
-        return
-
-    original_are_symlinks_supported = hf_file_download.are_symlinks_supported
-
-    def _always_false_on_windows(cache_dir: str) -> bool:
-        # Avoid WinError 1314 by forcing the non-symlink code path.
-        try:
-            original_are_symlinks_supported(cache_dir)
-        except Exception:
-            pass
-        return False
-
-    hf_file_download.are_symlinks_supported = _always_false_on_windows
-
-
 configure_hf_windows_cache()
 
 # --- Persistence ---
@@ -79,20 +26,10 @@ saver = MongoDBSaver(client, db_name="lapis_db", collection_name="checkpoints", 
 # --- RAG Setup ---
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-def get_transcript(video_url: str):
-    video_id = video_url.split("v=")[1].split("&")[0]
-    ytt_api = YouTubeTranscriptApi()
-    data = ytt_api.fetch(video_id)
-    full_text = ""
-    timestamp_map = []
-    for segment in data:
-        start_pos = len(full_text)
-        full_text += segment.text + " "
-        timestamp_map.append({"start": segment.start, "char_pos": start_pos})
-    return full_text, timestamp_map
-
 def ingest_youtube(video_url: str, thread_id: str):
     text, ts_map = get_transcript(video_url)
+
+    video_title = get_youtube_title(video_url)
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     docs = splitter.create_documents([text])
     
@@ -106,22 +43,17 @@ def ingest_youtube(video_url: str, thread_id: str):
     vector_db_path = f"vector_db/{thread_id}"
     db = FAISS.from_documents(docs, embeddings)
     db.save_local(vector_db_path)
-    return len(docs)
+
+    return {
+        "title": video_title,
+        "type": "video",
+        "source": video_url
+    }
 
 # --- Docling setup ---
-def get_pdf_converter():
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = True
-    pipeline_options.do_table_structure = True
-
-    return DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options = pipeline_options)
-        }
-    )
 pdf_converter = get_pdf_converter()
-
-def ingest_pdf(pdf_path: str, thread_id: str):
+ 
+def ingest_pdf(pdf_path: str, thread_id: str, name_pdf: str):
     """Parses scanned/digital PDFs using Docling and saves to thread-specific FAISS."""
     result_md = pdf_converter.convert(pdf_path)
     markdown_content = result_md.document.export_to_markdown()
@@ -143,7 +75,11 @@ def ingest_pdf(pdf_path: str, thread_id: str):
     else:
         db.save_local(vector_db_path)
     
-    return len(docs)
+    return {
+        "title": name_pdf,
+        "type": "pdf",
+        "source": pdf_path
+    }
 
 # --- Graph Nodes ---
 def chatbot_node(state: AgentState, config: RunnableConfig):

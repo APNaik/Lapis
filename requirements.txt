@@ -12,3 +12,4 @@ langgraph-checkpoint-mongodb
 langchain-huggingface
 sentence-transformers
 faiss-cpu
+yt-dlp

@@ -3,6 +3,7 @@ from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+import operator
 
 # --- Pydantic Object for Constraints ---
 class OutputConstraints(BaseModel):
@@ -18,6 +19,7 @@ class OutputFormat(BaseModel):
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     research_goal: str
+    indexed_assets: Annotated[List[dict], operator.add]
     web_search_links: List[str]
     yt_vid_links: List[str]
     docs: List[str]

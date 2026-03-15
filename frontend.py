@@ -22,15 +22,32 @@ apply_custom_theme()
 if "current_thread_id" not in st.session_state:
     st.session_state.current_thread_id = str(uuid.uuid4())
 
+config = {"configurable": {"thread_id": st.session_state.current_thread_id}}
 with st.sidebar:
     st.markdown('<h1 class="main-title">💎 Lapis</h1>', unsafe_allow_html=True)
     
+    #--- Render current assets---
+    st.subheader("Session assets")
+    state_snap = app.get_state(config)
+    assets = state_snap.values.get("indexed_assets", []) if state_snap.values else []
+
+    if not assets:
+        st.caption("No videos indexed yet")
+    else:
+        for asset in assets:
+            if asset["type"] == "video":
+                st.markdown(f"Video - {asset['title']}")
+            else:
+                st.markdown(f"Document - {asset['title']}")
+                
     st.header("Video Research")
     yt_url = st.text_input("YouTube URL")
     if st.button("Index Video"):
         with st.spinner("Processing..."):
-            ingest_youtube(yt_url, st.session_state.current_thread_id)
-            st.success("Video context saved for this session!")
+            asset_data = ingest_youtube(yt_url, st.session_state.current_thread_id)
+            app.update_state(config, {"indexed_assets": [asset_data]})
+            st.success(f"Indexed: {asset_data['title']}")
+            st.rerun()
 
     st.header("Document Research")
     uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
@@ -40,9 +57,11 @@ with st.sidebar:
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            num_chunks = ingest_pdf(temp_path, st.session_state.current_thread_id)
+            asset_data = ingest_pdf(temp_path, st.session_state.current_thread_id, uploaded_file.name)
             os.remove(temp_path)
-            st.success(f"Indexed {num_chunks} chunks from PDF!")
+            app.update_state(config, {"indexed_assets": [asset_data]})
+            st.success(f"Indexed file: {uploaded_file.name}")
+            st.rerun()
             
     st.divider()
     if st.button("+ New Chat", use_container_width=True):
@@ -56,7 +75,6 @@ with st.sidebar:
             st.session_state.current_thread_id = tid
             st.rerun()
 
-config = {"configurable": {"thread_id": st.session_state.current_thread_id}}
 state_snap = app.get_state(config)
 history = state_snap.values.get("messages", []) if state_snap.values else []
 
