@@ -20,8 +20,10 @@ import socket
 import requests.packages.urllib3.util.connection as conn
 
 # 1. Force Python to use IPv4 specifically 
+def allowed_gai_family():
+    return socket.AF_INET
 
-conn.allowed_gai_family = socket.AF_INET
+conn.allowed_gai_family = allowed_gai_family
 
 def dns_prewarm():
     """Attempt to resolve YouTube host to warm up the internal resolver."""
