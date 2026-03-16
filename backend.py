@@ -16,7 +16,21 @@ from langchain_core.runnables import RunnableConfig
 
 from state import AgentState
 from utils.helpers import configure_hf_windows_cache, get_pdf_converter, get_transcript, get_youtube_title
+import socket
+import requests.packages.urllib3.util.connection as conn
 
+# 1. Force Python to use IPv4 specifically 
+
+conn.allowed_gai_family = socket.AF_INET
+
+def dns_prewarm():
+    """Attempt to resolve YouTube host to warm up the internal resolver."""
+    try:
+        socket.gethostbyname('www.youtube.com')
+    except socket.gaierror:
+        pass
+
+dns_prewarm()
 load_dotenv()
 configure_hf_windows_cache()
 
