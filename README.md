@@ -1,12 +1,10 @@
 ---
-title: Lapis - Agentic Knowledge Aggregator
-emoji: 🤖
+title: Lapis
+emoji: 💎
 colorFrom: blue
-colorTo: green
-sdk: streamlit
-app_file: app.py
-pinned: false
+colorTo: indigo
+sdk: docker
+app_port: 7860
 ---
-
 # Agentic Knowledge Aggregator
 Lapis is a LangGraph-powered research assistant with MongoDB persistence and Gemini 1.5 Flash reasoning.
