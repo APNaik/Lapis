@@ -33,6 +33,13 @@ saver = MongoDBSaver(
     serde=JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_MSGPACK_MODULES),
 )
 
+PERSISTENT_DIR = "/data/vector_db" if os.path.exists("/data") else "vector_db"
+
+def get_vector_path(thread_id: str):
+    path = os.path.join(PERSISTENT_DIR, thread_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
 # --- RAG Setup ---
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
@@ -50,7 +57,7 @@ def ingest_youtube(video_url: str, thread_id: str):
         doc.metadata["source"] = video_url
 
     # Save vector store specifically for this thread
-    vector_db_path = f"vector_db/{thread_id}"
+    vector_db_path = get_vector_path(thread_id)
     db = FAISS.from_documents(docs, embeddings)
     db.save_local(vector_db_path)
 
@@ -76,9 +83,10 @@ def ingest_pdf(pdf_path: str, thread_id: str, name_pdf: str):
     ]
 
     # Save to the thread specific FAISS
-    vector_db_path = f"vector_db/{thread_id}"
+    vector_db_path = get_vector_path(thread_id)
     db = FAISS.from_documents(docs, embeddings)
-    if os.path.exists(vector_db_path):
+    index_file = os.path.join(vector_db_path, "index.faiss")
+    if os.path.exists(index_file):
         existing_db = FAISS.load_local(vector_db_path, embeddings, allow_dangerous_deserialization=True)
         existing_db.merge_from(db)
         existing_db.save_local(vector_db_path)
@@ -96,7 +104,7 @@ def chatbot_node(state: AgentState, config: RunnableConfig):
     # Strictly using gemini-2.5-flash
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", streaming=True)
     thread_id = config["configurable"].get("thread_id")
-    vector_db_path = f"vector_db/{thread_id}"
+    vector_db_path = get_vector_path(thread_id)
     
     context = ""
     # Load persistence-based context if it exists for this thread

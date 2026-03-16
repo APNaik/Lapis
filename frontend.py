@@ -5,6 +5,19 @@ from langchain_core.messages import HumanMessage, AIMessage
 from state import OutputFormat, OutputConstraints
 from backend import app, saver, ingest_youtube, ingest_pdf
 
+def initialize_thread():
+    """Retrieves existing thread_id from URL or creates a new one."""
+    url_thread_id = st.query_params.get("thread_id")
+    
+    if url_thread_id:
+        # User is returning to an existing session
+        st.session_state.current_thread_id = url_thread_id
+    elif "current_thread_id" not in st.session_state:
+        # First-time visitor: generate ID and update URL
+        new_id = str(uuid.uuid4())
+        st.session_state.current_thread_id = new_id
+        st.query_params["thread_id"] = new_id
+
 def apply_custom_theme():
     st.markdown("""
         <style>
@@ -17,10 +30,8 @@ def apply_custom_theme():
     """, unsafe_allow_html=True)
 
 st.set_page_config(page_title="Lapis AI", page_icon="💎", layout="wide")
+initialize_thread()
 apply_custom_theme()
-
-if "current_thread_id" not in st.session_state:
-    st.session_state.current_thread_id = str(uuid.uuid4())
 
 config = {"configurable": {"thread_id": st.session_state.current_thread_id}}
 with st.sidebar:
@@ -39,7 +50,7 @@ with st.sidebar:
                 st.markdown(f"Video - {asset['title']}")
             else:
                 st.markdown(f"Document - {asset['title']}")
-                
+
     st.header("Video Research")
     yt_url = st.text_input("YouTube URL")
     if st.button("Index Video"):
@@ -65,16 +76,21 @@ with st.sidebar:
             
     st.divider()
     if st.button("+ New Chat", use_container_width=True):
-        st.session_state.current_thread_id = str(uuid.uuid4())
+        new_id = str(uuid.uuid4())
+        st.session_state.current_thread_id = new_id
+        st.query_params["thread_id"] = new_id
         st.rerun()
     
     st.subheader("Recent Chats")
-    threads = list({c.config["configurable"]["thread_id"] for c in saver.list(None)})
-    for tid in threads:
-        if st.button(f"💬 Session {tid[:8]}", key=tid, use_container_width=True):
-            st.session_state.current_thread_id = tid
-            st.rerun()
-
+    try:
+        threads = list({c.config["configurable"]["thread_id"] for c in saver.list(None)})
+        for tid in threads:
+            if st.button(f"💬 Session {tid[:8]}", key=tid, use_container_width=True):
+                st.query_params["thread_id"] = tid
+                st.rerun()
+    except Exception as e:
+        st.caption("History currently unavailable")
+        
 state_snap = app.get_state(config)
 history = state_snap.values.get("messages", []) if state_snap.values else []
 
