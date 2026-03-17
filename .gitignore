@@ -4,3 +4,5 @@
 vector_db/
 __pycache__/
 *.pyc
+.vscode
+youtube_cookies.txt
