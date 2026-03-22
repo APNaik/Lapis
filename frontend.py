@@ -1,5 +1,6 @@
 import uuid
 import os
+import shutil
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage
 from state import OutputFormat, OutputConstraints
@@ -47,6 +48,25 @@ def apply_custom_theme():
         </style>
     """, unsafe_allow_html=True)
 
+def delete_current_chat():
+    """Wipes the current thread_id from DB, Disk and chat"""
+    tid = st.session_state.current_thread_id
+    try:
+        saver.delete_thread(tid)
+    except Exception as e:
+        st.error(f"Failed to delete the thread from DB: {str(e)}")
+    
+    PERSISTENT_DIR = "/data/vector_db" if os.path.exists("/data") else "vector_db"
+    vector_path = os.path.join(PERSISTENT_DIR, tid)
+    if os.path.exists(vector_path):
+        shutil.rmtree(vector_path)
+    
+    new_id = str(uuid.uuid4())
+    st.session_state.current_thread_id = new_id
+    st.query_params["thread_id"] = new_id
+    st.toast("Chat deleted successfully!")
+    st.rerun()
+
 st.set_page_config(page_title="Lapis AI", page_icon="💎", layout="wide")
 initialize_thread()
 apply_custom_theme()
@@ -93,6 +113,19 @@ with st.sidebar:
             st.rerun()
             
     st.divider()
+    if st.button("Delete this chat", use_container_width=True, type="secondary"):
+        st.session_state.confirm_delete = True
+    if st.session_state.get("confirm_delete"):
+        st.warning("Are you sure? This action cannot be undone!")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Yes, I am sure"):
+                delete_current_chat()
+        with col2:
+            if st.button("Cancel"):
+                st.session_state.confirm_delete = False
+                st.rerun()
+            
     if st.button("+ New Chat", use_container_width=True):
         new_id = str(uuid.uuid4())
         st.session_state.current_thread_id = new_id
