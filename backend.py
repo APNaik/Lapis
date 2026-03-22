@@ -3,16 +3,19 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 
 from langchain_core.documents import Document
-
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.mongodb import MongoDBSaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langchain_tavily import TavilySearch
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.mongodb import MongoDBSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.prebuilt import ToolNode
 
 from state import AgentState
 from utils.helpers import configure_hf_windows_cache, get_pdf_converter, get_transcript, get_youtube_title
@@ -99,39 +102,61 @@ def ingest_pdf(pdf_path: str, thread_id: str, name_pdf: str):
         "source": pdf_path
     }
 
-# --- Graph Nodes ---
-def chatbot_node(state: AgentState, config: RunnableConfig):
-    # Strictly using gemini-2.5-flash
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", streaming=True)
+# -- Tools setup ---
+@tool
+def web_search(query: str):
+    """Search the web using Tavily for real-time information and links"""
+    tavily_api_key = os.getenv("TAVILY_API_KEY")
+    if not tavily_api_key:
+        return (
+            "Web search is not configured. Set TAVILY_API_KEY in your .env file "
+            "and restart the Streamlit app."
+        )
+
+    try:
+        search = TavilySearch(max_results=5)
+        return search.invoke({"query": query})
+    except Exception as e:
+        return (
+            "Web search failed. Verify TAVILY_API_KEY is valid and Tavily service is reachable. "
+            f"Details: {str(e)}"
+        )
+
+@tool
+def query_knowledge_base(query: str, config: RunnableConfig):
+    """Query the indexed PDFs and YouTube transcripts for specific details."""
     thread_id = config["configurable"].get("thread_id")
     vector_db_path = get_vector_path(thread_id)
-    
-    context = ""
-    # Load persistence-based context if it exists for this thread
-    if os.path.exists(vector_db_path):
-        db = FAISS.load_local(vector_db_path, embeddings, allow_dangerous_deserialization=True)
-        last_msg = state["messages"][-1].content
-        relevant_docs = db.similarity_search(last_msg, k=3)
-        context_parts = []
-        for d in relevant_docs:
-            if "start" in d.metadata:
-                context_parts.append(f"[{d.metadata['start']}s]: {d.page_content}")
-            else:
-                source = d.metadata.get("source", "unknown")
-                context_parts.append(f"[{source}]: {d.page_content}")
-        context = "\n".join(context_parts)
+    if not os.path.exists(vector_db_path):
+        return "No documents of videos have been indexed yet"
+    db = FAISS.load_local(vector_db_path, embeddings, allow_dangerous_deserialization=True)
+    relevent_docs = db.similarity_search(query, k=5)
+    return "\n\n".join([d.page_content for d in relevent_docs])
 
-    system_prompt = (
-        f"You are Lapis. Research Goal: {state.get('research_goal')}. "
-        f"If context is provided below, answer based on it and cite sources.\n"
-        f"Context:\n{context}"
-    )
-    
-    messages = [AIMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [llm.invoke(messages)]}
+tools = [web_search, query_knowledge_base]
+
+# --- Graph Nodes ---
+def supervisor_node(state: AgentState):
+    """Decides whether to execute a tool or respond to the user"""
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash").bind_tools(tools)
+    system_msg = (f"You are Lapis, an expert research agen. Goal: {state.get('research_goal')}."
+                  "Use tools to find information if it is not in your context")
+    messages = [SystemMessage(content=system_msg)] + state["messages"]
+    response = llm.invoke(messages)
+    return {"messages": [response]}
+
+def should_continue(state: AgentState):
+    """Routing logic based on tool calls"""
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
 
 workflow = StateGraph(AgentState)
-workflow.add_node("agent", chatbot_node)
-workflow.add_edge(START, "agent")
-workflow.add_edge("agent", END)
+workflow.add_node("supervisor", supervisor_node)
+workflow.add_node("tools", ToolNode(tools))
+
+workflow.add_edge(START, "supervisor")
+workflow.add_conditional_edges("supervisor", should_continue)
+workflow.add_edge("tools", "supervisor")
 app = workflow.compile(checkpointer=saver)

@@ -20,8 +20,9 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     research_goal: str
     indexed_assets: Annotated[List[dict], operator.add]
-    web_search_links: List[str]
-    yt_vid_links: List[str]
-    docs: List[str]
+    web_search_links: Annotated[List[str], operator.add]
+    yt_vid_links: Annotated[List[str], operator.add]
+    docs: Annotated[List[str], operator.add]
     draft: str
     output_format: OutputFormat
+    next: str

@@ -1,6 +1,7 @@
 langgraph
 langchain-google-genai
 langchain-community
+langchain-tavily
 motor
 pymongo
 tavily-python
