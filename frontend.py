@@ -1,8 +1,9 @@
 import uuid
 import os
 import shutil
+import json
 import streamlit as st
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from state import OutputFormat, OutputConstraints
 from backend import app, saver, ingest_youtube, ingest_pdf
 
@@ -94,7 +95,11 @@ with st.sidebar:
     if st.button("Index Video"):
         with st.spinner("Processing..."):
             asset_data = ingest_youtube(yt_url, st.session_state.current_thread_id)
-            app.update_state(config, {"indexed_assets": [asset_data]})
+            app.update_state(
+                config, 
+                {"indexed_assets": [asset_data]},
+                as_node="supervisor" 
+            )
             st.success(f"Indexed: {asset_data['title']}")
             st.rerun()
 
@@ -108,7 +113,12 @@ with st.sidebar:
             
             asset_data = ingest_pdf(temp_path, st.session_state.current_thread_id, uploaded_file.name)
             os.remove(temp_path)
-            app.update_state(config, {"indexed_assets": [asset_data]})
+            app.update_state(
+                config, 
+                {"indexed_assets": [asset_data]}, 
+                as_node="supervisor"
+            )
+
             st.success(f"Indexed file: {uploaded_file.name}")
             st.rerun()
             
@@ -141,14 +151,51 @@ with st.sidebar:
                 st.rerun()
     except Exception as e:
         st.caption("History currently unavailable")
-        
+
+st.markdown("""
+    <style>
+    .tool-box { font-size: 0.8rem !important; opacity: 0.8; }
+    .stJson { font-size: 0.75rem !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 state_snap = app.get_state(config)
 history = state_snap.values.get("messages", []) if state_snap.values else []
 
-for msg in history:
-    role = "user" if isinstance(msg, HumanMessage) else "assistant"
-    with st.chat_message(role):
-        st.markdown(render_message_content(msg.content))
+i = 0
+while i < len(history):
+    msg = history[i]
+    if isinstance(msg, HumanMessage):
+        with st.chat_message("user"):
+            st.markdown(msg.content)
+        i += 1
+    elif isinstance(msg, AIMessage):
+        with st.chat_message("assistant"):
+            if msg.content:
+                st.markdown(render_message_content(msg.content))
+            if msg.tool_calls:
+                for call in msg.tool_calls:
+                    tool_res_content = "No response found."
+                    if i + 1 < len(history) and isinstance(history[i+1], ToolMessage):
+                        if history[i+1].tool_call_id == call['id']:
+                            tool_res_content = history[i+1].content
+                            i += 1 
+                    with st.container():
+                        st.markdown(f"<div class='tool-box'>", unsafe_allow_html=True)
+                        with st.expander(f"{call['name']}", expanded=False):
+                            st.caption("tool_request")
+                            st.json(call['args'])
+                            st.divider()
+                            
+                            st.caption("tool_response")
+                            try:
+                                st.json(json.loads(tool_res_content))
+                            except:
+                                st.text(tool_res_content)
+                        st.markdown("</div>", unsafe_allow_html=True)
+        i += 1
+    else:
+        i += 1
 
 if prompt := st.chat_input("Ask Lapis..."):
     st.chat_message("user").markdown(prompt)

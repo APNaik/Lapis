@@ -1,6 +1,7 @@
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
+import json
 
 from langchain_core.documents import Document
 from langchain_tavily import TavilySearch
@@ -124,30 +125,53 @@ def web_search(query: str):
 
 @tool
 def query_knowledge_base(query: str, config: RunnableConfig):
-    """Query the indexed PDFs and YouTube transcripts for specific details."""
+    """
+    USE THIS TOOL FIRST for any questions about videos or PDFs.
+    This tool searches the INTERNAL database of transcripts and documents 
+    that the user has already indexed in this session.
+    Input should be a specific search query based on the user's question.
+    """
     thread_id = config["configurable"].get("thread_id")
     vector_db_path = get_vector_path(thread_id)
     if not os.path.exists(vector_db_path):
         return "No documents of videos have been indexed yet"
     db = FAISS.load_local(vector_db_path, embeddings, allow_dangerous_deserialization=True)
     relevent_docs = db.similarity_search(query, k=5)
-    return "\n\n".join([d.page_content for d in relevent_docs])
+    results = [{"content": d.page_content, "source": d.metadata.get("source")} for d in relevent_docs]
+    return json.dumps(results)
 
 tools = [web_search, query_knowledge_base]
 
 # --- Graph Nodes ---
 def supervisor_node(state: AgentState):
     """Decides whether to execute a tool or respond to the user"""
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash").bind_tools(tools)
-    system_msg = (f"You are Lapis, an expert research agen. Goal: {state.get('research_goal')}."
-                  "Use tools to find information if it is not in your context")
+    assets = state.get("indexed_assets", [])
+    asset_titles = [a['title'] for a in assets]
+
+    asset_context = ""
+    if asset_titles:
+        asset_context = f"\nYou have access to the following indexed materials: {', '.join(asset_titles)}."
+        asset_context += "\nTo answer questions about these, you MUST use the 'query_knowledge_base' tool."
+    else:
+        asset_context = "\nNo documents or videos have been indexed yet. Tell the user to upload/index them if they ask questions."
+    
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite").bind_tools(tools)
+
+    system_msg = (
+        f"You are Lapis, a research assistant. Goal: {state.get('research_goal', 'Assist user')}."
+        f"{asset_context}"
+        "\nDo not ask the user for links if the asset is already listed above; use your tools instead."
+    )
     messages = [SystemMessage(content=system_msg)] + state["messages"]
     response = llm.invoke(messages)
     return {"messages": [response]}
 
 def should_continue(state: AgentState):
     """Routing logic based on tool calls"""
-    last_message = state["messages"][-1]
+    messages = state.get("messages", [])
+    if not messages:
+        return END
+    last_message = messages[-1]
     if last_message.tool_calls:
         return "tools"
     return END
