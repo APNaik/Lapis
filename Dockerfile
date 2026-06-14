@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # 1. Install system dependencies
 # These are required for Docling, FAISS, and OpenCV (libGL)
@@ -25,13 +25,12 @@ RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceT
 # 5. Copy the rest of the application code
 COPY . .
 
-# 6. Render setup
-# Render provides a PORT environment variable, but Streamlit defaults to 8501.
-# We will use 8501 and map it in the Render Dashboard.
-EXPOSE 8501
+# 6. Runtime setup
+# Hugging Face Spaces and most container platforms expose the desired port
+# through PORT. Default to 7860 so the app works out of the box on Spaces.
+ENV PORT=7860
+EXPOSE 7860
 
-# 7. Execution Command
-# Using the standard Streamlit start command.
-# Note: We are not using a shell script here to keep it simple, 
-# as Render handles networking natively.
-CMD ["streamlit", "run", "frontend.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+# 7. Execution command
+# Use a shell form here so the PORT environment variable can be honored.
+CMD ["sh", "-c", "streamlit run frontend.py --server.port ${PORT} --server.address 0.0.0.0"]

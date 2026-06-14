@@ -1,0 +1,12 @@
+.git
+.github
+lapis_env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+vector_db/
+temp_*
+.DS_Store
+docs
